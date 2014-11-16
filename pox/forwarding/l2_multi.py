@@ -57,8 +57,8 @@ waiting_paths = {}
 FLOOD_HOLDDOWN = 5
 
 # Flow timeouts
-FLOW_IDLE_TIMEOUT = 10
-FLOW_HARD_TIMEOUT = 30
+FLOW_IDLE_TIMEOUT = 0
+FLOW_HARD_TIMEOUT = 0
 
 # How long is allowable to set up a path?
 PATH_SETUP_TIME = 4
@@ -99,7 +99,7 @@ def _calc_paths ():
               # i -> k -> j is better than existing
               path_map[i][j] = (ikj_dist, k)
 
-  #print "--------------------"
+  print "--------------------"
   #dump()
 
 
@@ -401,10 +401,12 @@ class Switch (EventMixin):
     self.connection = connection
     self._listeners = self.listenTo(connection)
     self._connected_at = time.time()
+    #print(time.time())
 
   @property
   def is_holding_down (self):
     if self._connected_at is None: return True
+    #print (time.time())
     if time.time() - self._connected_at > FLOOD_HOLDDOWN:
       return False
     return True
