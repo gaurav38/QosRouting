@@ -98,7 +98,7 @@ def _calc_paths ():
             if path_map[i][j][0] is None or ikj_dist < path_map[i][j][0]:
               # i -> k -> j is better than existing
               path_map[i][j] = (ikj_dist, k)
-
+              
   print "--------------------"
   #dump()
 
@@ -155,7 +155,7 @@ def _get_path (src, dst, first_port, final_port):
     r.append((s1,in_port,out_port))
     in_port = adjacency[s2][s1]
   r.append((dst,in_port,final_port))
-
+  print "Printing path\n",r
   assert _check_path(r), "Illegal path!"
 
   return r
@@ -340,7 +340,8 @@ class Switch (EventMixin):
     if packet.effective_ethertype == packet.LLDP_TYPE:
       drop()
       return
-
+    pktt = packet.find('ipv4')
+    print "ToS value - ",pktt.tos
     if oldloc is None:
       if packet.src.is_multicast == False:
         mac_map[packet.src] = loc # Learn position for ethaddr
@@ -380,9 +381,14 @@ class Switch (EventMixin):
         flood()
       else:
         dest = mac_map[packet.dst]
-        match = of.ofp_match.from_packet(packet)
-        self.install_path(dest[0], dest[1], match, event)
+	if packet.type == ethernet.IP_TYPE:
+        ipv4_packet=event.parse.find("ipv4")
+        tos = ipv4_packet.tos
 
+     	match=of.ofp.match.from_packet(dl_dst=packet.dst, nw_tos=tos)
+
+	self.install_path(dest[0], dest[1], match, event,tos)
+     
   def disconnect (self):
     if self.connection is not None:
       log.debug("Disconnect %s" % (self.connection,))

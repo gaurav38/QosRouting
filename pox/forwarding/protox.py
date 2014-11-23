@@ -26,6 +26,8 @@ import time
 from pox.openflow.libopenflow_01 import *
 import calendar
 from time import gmtime
+import pox.forwarding.cost_function as cf
+from collections import defaultdict
  
 log = core.getLogger()
 dpids = []
@@ -40,7 +42,14 @@ bw = 2
 rx = 3
 tx= 4
 time_init = int(time.time())
+
+"""
+ports = {'dpid':{port_no:[mac-address, latency, bandwidth, rx_drops, tx_drops]}}
+
+"""
+
 ######################################################################################################
+
 def _handle_ConnectionUp (event):
   """
   Tell all switches to forward latency packets to controller
@@ -137,8 +146,12 @@ def find_latency1():
     find_latency_to_dpid(dpid)
   for dpid in dpids:
     find_latency(dpid)
-  #find_latency(dpids[0])
-#    print ports[dpidToStr(dpid)]
+
+  # Testing the cost function here
+  link_costs = defaultdict(lambda:defaultdict(lambda:None))
+  tos = 46
+  link_costs = cf.find_cost(tos)
+  print link_costs
 
 #############################################################################################################################
 
@@ -165,7 +178,7 @@ def handle_pkt (event):
             break
         if latency >=0:
           ports[swdpsrc][k][1] = latency
-        print swdpsrc,"->",dest_dpid,"--",ports[swdpsrc][k][1]
+        #print swdpsrc,"->",dest_dpid,"--",ports[swdpsrc][k][1]
 
 #############################################################################################################################
 
