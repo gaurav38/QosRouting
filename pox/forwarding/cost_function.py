@@ -4,7 +4,7 @@ from pox.lib.util import dpidToStr, strToDPID
 import pox.lib.packet as pkt
 from pox.lib.recoco import Timer
 from pox.openflow.libopenflow_01 import *
-import pox.forwarding.protox as protox
+import protox
 #import pox.forwarding.protox as dpids
 from collections import defaultdict
 
@@ -77,7 +77,4 @@ def find_cost(tos):
       link_costs[switch][dest_switch] = cost
       print "blah" 
   return link_costs
-  
-
-def launch():
-  
+    

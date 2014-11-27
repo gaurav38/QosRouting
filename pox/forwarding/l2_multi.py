@@ -26,16 +26,105 @@ does (mostly) work. :)
 Depends on openflow.discovery
 Works with openflow.spanning_tree
 """
-
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
 from pox.lib.revent import *
 from pox.lib.recoco import Timer
 from collections import defaultdict
 from pox.openflow.discovery import Discovery
-from pox.lib.util import dpid_to_str
+from pox.lib.util import dpid_to_str, dpidToStr, strToDPID
 import time
+from protox import LAT_TYPE, dpids, ports
+from pox.openflow.libopenflow_01 import *
+from collections import defaultdict
 
+"""
+Constants and variables to be used by our Cost Function
+"""
+# link_costs: [sw1][sw2] = cost
+link_costs = defaultdict(lambda:defaultdict(lambda:None))
+switch_adjacency = defaultdict(lambda:defaultdict(lambda:None))
+cf_constants = {}
+#tos_constants = []
+
+# create lists for different kinds of tos values
+voice_tos = [46, 40, 32, 38, 36]
+video_tos = [30, 28]
+business_tos = [20, 22, 12, 14]
+
+"""
+Constants declaration end
+"""
+####################################### Functions for Cost Function######################################
+def get_cf_consts():
+  voice = [100, 0.1, 0.003]
+  video = [100, 0.07, 0.007]
+  business = [100, 0.01, 0.01]
+  besteffort = [100, 0, 0]
+  cf_constants['voice'] = voice
+  cf_constants['video'] = video
+  cf_constants['business'] = business
+  cf_constants['besteffort'] = besteffort
+  print cf_constants
+    
+def get_tos_constants(tos, tos_constants):
+  if tos in voice_tos:
+    tos_constants = cf_constants['voice']
+  elif tos in video_tos:
+    tos_constants = cf_constants['video']
+  elif tos in business_tos:
+    tos_constants = cf_constants['business']
+  else:
+    tos_constants = cf_constants['besteffort']
+  print tos_constants
+  return tos_constants
+
+def create_adjacency():
+  for l in core.openflow_discovery.adjacency:
+    switch_adjacency[l.dpid1][l.port1] = l.dpid2
+  print switch_adjacency
+
+def find_cost(tos):
+  print "##############################################################################################"
+  print tos
+  create_adjacency()
+  get_cf_consts()
+  tos_constants = []
+  tos_constants = get_tos_constants(tos, tos_constants)
+  print tos_constants 
+  print "Initialized constants. Finding cost now"
+  print "##############################################################################################"
+
+  switch_dict = {}
+  # Iterate through all the switches and find the cost to its neighboring switch. Ignore port 65534
+  for switch in dpids:
+    switchStr = dpidToStr(switch)
+    # Get this switch latency map
+    switch_dict = ports[switchStr]
+    # Iterate through all the ports of this switch. Ignore port 65534
+    port_list = []
+    for port in switch_dict:
+      port_list = switch_dict[port]
+      dest_switch = switch_adjacency[switch][port]
+
+      # Get the values of BW, latency, Rx and Tx
+      latency = port_list[1]
+      bw = port_list[2]
+      rx = port_list[3]
+      tx = port_list[4]
+
+      # Just a "bad" implementation of cost function based on rough assumption
+      n = 0
+      if tos_constants[1] is not 0:
+        n = 1
+      cost = tos_constants[0]/bw + n*(tos_constants[1]*latency + tos_constants[2]*tx)
+
+      # Store the calculated cost value in the dictionary
+      link_costs[switch][dest_switch] = cost
+  print link_costs
+  return link_costs
+
+################################################# End of Cost Function ##################################################
 log = core.getLogger()
 
 # Adjacency map.  [sw1][sw2] -> port from sw1 to sw2
@@ -64,19 +153,20 @@ FLOW_HARD_TIMEOUT = 0
 PATH_SETUP_TIME = 4
 
 
-def _calc_paths ():
+def _calc_paths (tos):
   """
   Essentially Floyd-Warshall algorithm
   """
-
+  link_costs = find_cost(tos)
+  print link_costs
   def dump ():
     for i in sws:
       for j in sws:
         a = path_map[i][j][0]
         #a = adjacency[i][j]
         if a is None: a = "*"
-        print a,
-      print
+      #  print a,
+     # print
 
   sws = switches.values()
   path_map.clear()
@@ -103,11 +193,11 @@ def _calc_paths ():
   #dump()
 
 
-def _get_raw_path (src, dst):
+def _get_raw_path (src, dst,tos):
   """
   Get a raw path (just a list of nodes to traverse)
   """
-  if len(path_map) == 0: _calc_paths()
+  if len(path_map) == 0: _calc_paths(tos)
   if src is dst:
     # We're here!
     return []
@@ -117,8 +207,8 @@ def _get_raw_path (src, dst):
   if intermediate is None:
     # Directly connected
     return []
-  return _get_raw_path(src, intermediate) + [intermediate] + \
-         _get_raw_path(intermediate, dst)
+  return _get_raw_path(src, intermediate, tos) + [intermediate] + \
+         _get_raw_path(intermediate, dst, tos)
 
 
 def _check_path (p):
@@ -135,7 +225,7 @@ def _check_path (p):
   return True
 
 
-def _get_path (src, dst, first_port, final_port):
+def _get_path (src, dst, first_port, final_port, tos):
   """
   Gets a cooked path -- a list of (node,in_port,out_port)
   """
@@ -143,7 +233,7 @@ def _get_path (src, dst, first_port, final_port):
   if src == dst:
     path = [src]
   else:
-    path = _get_raw_path(src, dst)
+    path = _get_raw_path(src, dst, tos)
     if path is None: return None
     path = [src] + path + [dst]
 
@@ -255,11 +345,11 @@ class Switch (EventMixin):
       sw.connection.send(msg)
       wp.add_xid(sw.dpid,msg.xid)
 
-  def install_path (self, dst_sw, last_port, match, event):
+  def install_path (self, dst_sw, last_port, match, event, tos):
     """
     Attempts to install a path between this switch and some destination
     """
-    p = _get_path(self, dst_sw, event.port, last_port)
+    p = _get_path(self, dst_sw, event.port, last_port, tos)
     if p is None:
       log.warning("Can't get from %s to %s", match.dl_src, match.dl_dst)
 
@@ -337,11 +427,19 @@ class Switch (EventMixin):
     loc = (self, event.port) # Place we saw this ethaddr
     oldloc = mac_map.get(packet.src) # Place we last saw this ethaddr
 
-    if packet.effective_ethertype == packet.LLDP_TYPE:
+    if packet.effective_ethertype == packet.LLDP_TYPE or packet.effective_ethertype == LAT_TYPE:
       drop()
       return
+    tos = 0;
+    if packet.type == ethernet.IP_TYPE:
+      ipv4_packet=packet.find("ipv4")
+      tos = ipv4_packet.tos
+      print "IP Packet found - ToS =",tos
+    
     pktt = packet.find('ipv4')
-    print "ToS value - ",pktt.tos
+    #if pktt.tos is not None:
+    #  print "ToS value - ",pktt.tos
+#    tos=pktt.tos
     if oldloc is None:
       if packet.src.is_multicast == False:
         mac_map[packet.src] = loc # Learn position for ethaddr
@@ -382,10 +480,10 @@ class Switch (EventMixin):
       else:
         dest = mac_map[packet.dst]
 	if packet.type == ethernet.IP_TYPE:
-        ipv4_packet=event.parse.find("ipv4")
-        tos = ipv4_packet.tos
+           ipv4_packet=packet.find("ipv4")
+           tos = ipv4_packet.tos
 
-     	match=of.ofp.match.from_packet(dl_dst=packet.dst, nw_tos=tos)
+     	match=of.ofp_match(dl_dst=packet.dst, nw_tos=tos)
 
 	self.install_path(dest[0], dest[1], match, event,tos)
      

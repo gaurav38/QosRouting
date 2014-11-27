@@ -26,7 +26,7 @@ import time
 from pox.openflow.libopenflow_01 import *
 import calendar
 from time import gmtime
-import pox.forwarding.cost_function as cf
+import cost_function as cf
 from collections import defaultdict
  
 log = core.getLogger()
@@ -148,10 +148,10 @@ def find_latency1():
     find_latency(dpid)
 
   # Testing the cost function here
-  link_costs = defaultdict(lambda:defaultdict(lambda:None))
-  tos = 46
-  link_costs = cf.find_cost(tos)
-  print link_costs
+#  link_costs = defaultdict(lambda:defaultdict(lambda:None))
+#  tos = 46
+#  link_costs = cf.find_cost(tos)
+#  print link_costs
 
 #############################################################################################################################
 
