@@ -118,7 +118,7 @@ class LLDPSender (object):
     if port_num > of.OFPP_MAX: return
     self.del_port(dpid, port_num, set_timer = False)
     self._next_cycle.append(LLDPSender.SendItem(dpid, port_num,
-          self.create_packet_out(dpid, port_num, port_addr)))
+          self.create_discovery_packet(dpid, port_num, port_addr)))
     if set_timer: self._set_timer()
 
   def _set_timer (self):
@@ -160,17 +160,7 @@ class LLDPSender (object):
       self._next_cycle.append(item)
       core.openflow.sendToDPID(item.dpid, item.packet)
 
-  def create_packet_out (self, dpid, port_num, port_addr):
-    """
-    Create an ofp_packet_out containing a discovery packet
-    """
-    eth = self._create_discovery_packet(dpid, port_num, port_addr, self._ttl)
-    po = of.ofp_packet_out(action = of.ofp_action_output(port=port_num))
-    po.data = eth.pack()
-    return po.pack()
-
-  @staticmethod
-  def _create_discovery_packet (dpid, port_num, port_addr, ttl):
+  def create_discovery_packet (self, dpid, port_num, port_addr):
     """
     Build discovery packet
     """
@@ -181,7 +171,7 @@ class LLDPSender (object):
 
     port_id = pkt.port_id(subtype=pkt.port_id.SUB_PORT, id=str(port_num))
 
-    ttl = pkt.ttl(ttl = ttl)
+    ttl = pkt.ttl(ttl = self._ttl)
 
     sysdesc = pkt.system_description()
     sysdesc.payload = bytes('dpid:' + hex(long(dpid))[2:-1])
@@ -198,18 +188,20 @@ class LLDPSender (object):
     eth.dst = pkt.ETHERNET.NDP_MULTICAST
     eth.payload = discovery_packet
 
-    return eth
+    po = of.ofp_packet_out(action = of.ofp_action_output(port=port_num))
+    po.data = eth.pack()
+    return po.pack()
 
 
 class LinkEvent (Event):
   """
   Link up/down event
   """
-  def __init__ (self, add, link, event = None):
+  def __init__ (self, add, link):
+    Event.__init__(self)
     self.link = link
     self.added = add
     self.removed = not add
-    self.event = event # PacketIn which caused this, if any
 
   def port_for_dpid (self, dpid):
     if self.link.dpid1 == dpid:
@@ -449,7 +441,7 @@ class Discovery (EventMixin):
     if link not in self.adjacency:
       self.adjacency[link] = time.time()
       log.info('link detected: %s', link)
-      self.raiseEventNoErrors(LinkEvent, True, link, event)
+      self.raiseEventNoErrors(LinkEvent, True, link)
     else:
       # Just update timestamp
       self.adjacency[link] = time.time()
