@@ -28,7 +28,6 @@ dpid_stats = {}
 latency = 0
 bw = 1
 tx = 2
-prevtx = 3
 time_init = int(time.time())
 first = 1
 """
@@ -203,9 +202,7 @@ class Switch (EventMixin):
         #    break
         k = 0
         for p in switch_adjacency[strToDPID(swdpsrc)]:
-          print swdpsrc,"\n",switch_adjacency[strToDPID(swdpsrc)]
           if switch_adjacency[strToDPID(swdpsrc)][p] is event.dpid:
-            print "matches with",dpidToStr(event.dpid)," when p = ",p
             k = p
         if latency >=0:
           if k in ports[swdpsrc]:
@@ -267,6 +264,7 @@ class Switch (EventMixin):
   def disconnect (self):
     global switch_adjacency
     if self.connection is not None:
+      print "Mar gaya bechara switch"
       del_dpid = self.connection.dpid
       del ports[dpidToStr(del_dpid)]
       del dpids[dpids.index(del_dpid)]
@@ -331,10 +329,8 @@ def handle_QueueStatsReceived (event):
 #  print "Queue stats received"
   for qStats in event.stats:
     if qStats.port_no in ports[dpidToStr(event.dpid)]:
-      qSt = qStats.tx_errors - ports[dpidToStr(event.dpid)][qStats.port_no][prevtx]
-      ports[dpidToStr(event.dpid)][qStats.port_no][prevtx] = qStats.tx_errors
+      qSt = qStats.tx_errors - ports[dpidToStr(event.dpid)][qStats.port_no][tx]
       ports[dpidToStr(event.dpid)][qStats.port_no][tx] = qSt
-      print "Updated", dpidToStr(event.dpid),qStats.port_no," = ",qSt
 
 ######################################################################################################
 
@@ -343,7 +339,7 @@ def find_latency(dpid):
     if(key != 65534):
       packet = of.ofp_packet_out(action = of.ofp_action_output(port = key))
       packet.data = create_lat_pkt(dpid,key)
-      print "Sending to ",dpidToStr(dpid)," key ", key
+      #print "Sending to ",dpid," key ", key
       core.openflow.sendToDPID(dpid, packet)
 
 ######################################################################################################
@@ -414,9 +410,9 @@ Constants declaration end
 """
 ####################################### Functions for Cost Function ###################################
 def get_cf_consts():
-  voice = [100, 0.3, 0.003]
-  video = [100, 0.1, 0.007]
-  business = [100, 0.02, 0.01]
+  voice = [100, 0.1, 0.003]
+  video = [100, 0.07, 0.007]
+  business = [100, 0.01, 0.01]
   besteffort = [100, 0, 0]
   cf_constants['voice'] = voice
   cf_constants['video'] = video
@@ -777,8 +773,8 @@ class l2_multi (EventMixin):
       # ignore this link up.
       # Otherwise, we might be interested...
       if event.added:
-        ports[dpidToStr(l.dpid1)][l.port1] = [0.0, 100, 0, 0]
-        ports[dpidToStr(l.dpid2)][l.port2] = [0.0, 100, 0, 0]
+        ports[dpidToStr(l.dpid1)][l.port1] = [0.0, 100, 0]
+        ports[dpidToStr(l.dpid2)][l.port2] = [0.0, 100, 0]
       if adjacency[sw1][sw2] is None:
         # These previously weren't connected.  If the link
         # exists in both directions, we consider them connected now.
@@ -819,7 +815,7 @@ class l2_multi (EventMixin):
     dpid_latency[event.dpid] = 0.000
     dpid_stats[event.dpid] = []
     for p in event.ofp.ports:
-      port = [0.0, 100, 0, 0]
+      port = [0.0, 100, 0]
       ports[dpidToStr(event.dpid)][p.port_no] = port
 
     """
@@ -831,8 +827,6 @@ class l2_multi (EventMixin):
     msg = of.ofp_flow_mod()
     msg.priority = 65000
     msg.match = match
-    msg.idle_timeout = 0
-    msg.hard_timeout = 0
     msg.actions.append(of.ofp_action_output(port = of.OFPP_CONTROLLER))
     connection.send(msg)
 

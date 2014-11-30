@@ -25,13 +25,11 @@ LAT_TYPE    = 0x07c3
 dpid_ts = {}
 dpid_latency = {}
 dpid_stats = {}
-mac = 0
-latency = 1
-bw = 2
-rx = 3
-tx= 4
+latency = 0
+bw = 1
+tx = 2
 time_init = int(time.time())
-
+first = 1
 """
 ports = {'dpid':{port_no:[mac-address, latency, bandwidth, rx_drops, tx_drops]}}
 
@@ -120,8 +118,8 @@ class Switch (EventMixin):
 
     # Now reverse it and install it backwards
     # (we'll just assume that will work)
-    p = [(sw,out_port,in_port) for sw,in_port,out_port in p]
-    self._install_path(p, match.flip())
+#    p = [(sw,out_port,in_port) for sw,in_port,out_port in p]
+#    self._install_path(p, match.flip())
 
 
   def _handle_PacketIn (self, event):
@@ -158,25 +156,19 @@ class Switch (EventMixin):
     
     ##################################################################################################################################################
     ################################################################ Handle ARP Type ################################################################
-
     if packet.type == ethernet.ARP_TYPE:
       arppack = packet.find('arp')
       if arppack.opcode == arp.REQUEST:
-        #oldloc = mac_map.get(packet.dst)
-        #if oldloc is None:
         mac_map[packet.src] = loc # Learn position for ethaddr
         log.debug("Learned %s at %s.%i", packet.src, loc[0], loc[1])
-        print "No. of switches = ",len(dpids)
         for switch in dpids:
           if switch is self.dpid:
             print "Same switch"
             continue
-          print "Sending ARPREQ to",dpidToStr(switch)
-          print "Host ports = ",host_ports[switch]
+          print "Sending ARP REQ to",dpidToStr(switch)
           action_out = [of.ofp_action_output(port = port) for port in host_ports[switch]]
           core.openflow.sendToDPID(switch, of.ofp_packet_out(data=packet.pack(),action=action_out))
         return
-
       if arppack.opcode == arp.REPLY:
         mac_map[packet.src] = loc
         loc_dst = mac_map[packet.dst] # Learn position for ethaddr
@@ -194,7 +186,7 @@ class Switch (EventMixin):
       """
       #print dpidToStr(event.dpid)
       port = packet.src
-      [prevtime, mac, swdpdest, swdpsrc] = packet.payload.split(',')
+      [prevtime, swdpdest, swdpsrc] = packet.payload.split(',')
       prevtime = float(prevtime)
       currtime = time.time()
       #print "PrevTime = ", prevtime, "    CurrTime = ", currtime
@@ -205,16 +197,19 @@ class Switch (EventMixin):
         #print "Latency =",latency
         #swd = ports[dpidToStr(self.dpid)]
         swd = ports[swdpsrc]
-        for k in swd:
-          if swd[k][0] == mac:
-            break
+        #for k in swd:
+        #  if swd[k][0] == mac:
+        #    break
+        k = 0
+        for p in switch_adjacency[strToDPID(swdpsrc)]:
+          if switch_adjacency[strToDPID(swdpsrc)][p] is event.dpid:
+            k = p
         if latency >=0:
-          ports[swdpsrc][k][1] = latency
+          if k in ports[swdpsrc]:
+            ports[swdpsrc][k][0] = latency
       return
     ##################################################################################################################################################
 
-
-    
     if oldloc is None:
       if packet.src.is_multicast == False:
         mac_map[packet.src] = loc # Learn position for ethaddr
@@ -242,6 +237,7 @@ class Switch (EventMixin):
           # Unfortunately, we know the destination.  It's possible that
           # we learned it while it was in flight, but it's also possible
           # that something has gone wrong.
+          print "Hit MacMap"
           log.warning("Packet from %s to known destination %s arrived "
                       "at %s.%i without flow", packet.src, packet.dst,
                       dpid_to_str(self.dpid), event.port)
@@ -257,17 +253,28 @@ class Switch (EventMixin):
       else:
         dest = mac_map[packet.dst]
      	match=of.ofp_match.from_packet(packet)
-
 	self.install_path(dest[0], dest[1], match, event)
      
   def disconnect (self):
+    global switch_adjacency
     if self.connection is not None:
+      print "Mar gaya bechara switch"
+      del_dpid = self.connection.dpid
+      del ports[dpidToStr(del_dpid)]
+      del dpids[dpids.index(del_dpid)]
+      del dpid_ts[del_dpid]
+      del dpid_latency[del_dpid]
+      del dpid_stats[del_dpid]
+     # for k in switch_adjacency:
+      switch_adjacency = {}
+      create_adjacency()
       log.debug("Disconnect %s" % (self.connection,))
       self.connection.removeListeners(self._listeners)
       self.connection = None
       self._listeners = None
 
   def connect (self, connection):
+    print "Connected to the greatest switch ever"
     if self.dpid is None:
       self.dpid = connection.dpid
     assert self.dpid == connection.dpid
@@ -306,16 +313,18 @@ def handle_switch_desc(event):
 
 ######################################################################################################
 
-def handle_PortStatsReceived (event):
+def handle_QueueStatsReceived (event):
     
     #Handles port stats event.
     
   #self.stats = event.stats
 #  print "Switch",dpidToStr(event.dpid)
-  log.debug("PortStatsReceived")
-  for portStats in event.stats:
-    ports[dpidToStr(event.dpid)][portStats.port_no][rx] = portStats.rx_dropped
-    ports[dpidToStr(event.dpid)][portStats.port_no][tx] = portStats.tx_dropped
+  log.debug("QueueStatsReceived")
+#  print "Queue stats received"
+  for qStats in event.stats:
+    if qStats.port_no in ports[dpidToStr(event.dpid)]:
+      qSt = qStats.tx_errors - ports[dpidToStr(event.dpid)][qStats.port_no][tx]
+      ports[dpidToStr(event.dpid)][qStats.port_no][tx] = qSt
 
 ######################################################################################################
 
@@ -323,20 +332,19 @@ def find_latency(dpid):
   for key in ports[dpidToStr(dpid)]:
     if(key != 65534):
       packet = of.ofp_packet_out(action = of.ofp_action_output(port = key))
-      packet.data = create_lat_pkt(dpid,key,ports[dpidToStr(dpid)][key][0])
+      packet.data = create_lat_pkt(dpid,key)
       #print "Sending to ",dpid," key ", key
       core.openflow.sendToDPID(dpid, packet)
 
 ######################################################################################################
 
-def create_lat_pkt(dpid, port, port_mac):
+def create_lat_pkt(dpid, port):
   pkt1 = pkt.ethernet(type=LAT_TYPE)
-  pkt1.src = port_mac
   for l in core.openflow_discovery.adjacency:
       if ((l.dpid1 == dpid) and (l.port1 == port)):
         #print "Sending for",l
         pkt1.dst = pkt.ETHERNET.NDP_MULTICAST #need to decide
-        pkt1.payload = str(time.time()) + ',' + port_mac + ',' + dpidToStr(l.dpid2) + ',' + dpidToStr(l.dpid1)
+        pkt1.payload = str(time.time()) + ',' + dpidToStr(l.dpid2) + ',' + dpidToStr(l.dpid1)
         return pkt1.pack()
 
 ######################################################################################################
@@ -344,16 +352,20 @@ def find_latency_to_dpid(dpid):
   pkt = ofp_stats_request(type=OFPST_DESC)
   dpid_ts[dpid] = time.time()
   core.openflow.sendToDPID(dpid, pkt)
-  mbody = ofp_port_stats_request()
+  mbody = ofp_queue_stats_request()
   mbody.port_no = of.OFPP_NONE
   pkt = ofp_stats_request(body = mbody)
-  pkt.type = OFPST_PORT
+  pkt.type = OFPST_QUEUE
   core.openflow.sendToDPID(dpid,pkt)
 
 ######################################################################################################
 
 def find_latency1():
-#  print ports
+  create_adjacency();
+  print "***************************************************************************"
+  print "Here are the link status"
+  print ports
+  print "***************************************************************************"
   for dpid in dpids:
     find_latency_to_dpid(dpid)
   for dpid in dpids:
@@ -376,14 +388,16 @@ Constants and variables to be used by our Cost Function
 # link_costs: [sw1][sw2] = cost
 #link_costs = defaultdict(lambda:defaultdict(lambda:None))
 link_costs = {}
+topology_costs = {}
 switch_adjacency = {}
 cf_constants = {}
 #tos_constants = []
 host_ports = {}
 # create lists for different kinds of tos values
-voice_tos = [46, 40, 32, 38, 36]
-video_tos = [30, 28]
-business_tos = [20, 22, 12, 14]
+voice_tos = [184, 160, 128, 152, 144]
+video_tos = [120, 112]
+business_tos = [80, 88, 48, 56]
+besteffort_tos = [0]
 
 """
 Constants declaration end
@@ -398,39 +412,43 @@ def get_cf_consts():
   cf_constants['video'] = video
   cf_constants['business'] = business
   cf_constants['besteffort'] = besteffort
-  print cf_constants
     
-def get_tos_constants(tos, tos_constants):
+def get_tos_constants(tos_constants, category):
   if tos in voice_tos:
     tos_constants = cf_constants['voice']
+    category = voice_tos
   elif tos in video_tos:
     tos_constants = cf_constants['video']
+    category = video_tos
   elif tos in business_tos:
     tos_constants = cf_constants['business']
+    category = business_tos
   else:
     tos_constants = cf_constants['besteffort']
-  print tos_constants
-  return tos_constants
+    category = besteffort_tos
+  print "K1, K2 and K3 for this tos = ",tos_constants
+  return tos_constants,category
 
 def create_adjacency():
+  #switch_adjacency = {}
   for dpid in dpids:
     switch_adjacency[dpid] = {}
   for l in core.openflow_discovery.adjacency:
     switch_adjacency[l.dpid1][l.port1] = l.dpid2
+  print "Adjacency of the Topology"
   print switch_adjacency
 
-def find_cost(tos):
+def find_cost(category):
   print "##############################################################################################"
-  print "Received ToS = ",tos
+  print "Inside Find Cost"
+  print "Received ToS = ",category
   create_adjacency()
   get_cf_consts()
-  tos_constants = []
-  tos_constants = get_tos_constants(tos, tos_constants)
-  print tos_constants 
+  tos_constants = cf_constants[category]
+  #tos_constants,category = get_tos_constants(tos, tos_constants, category)
   print "Initialized constants. Finding cost now"
-  print "##############################################################################################"
-
   switch_dict = {}
+  link_costs[category] = {}
   # Iterate through all the switches and find the cost to its neighboring switch. Ignore port 65534
   for switch in dpids:
     link_costs[switch] = {}
@@ -445,24 +463,23 @@ def find_cost(tos):
       dest_switch = switch_adjacency[switch][port]
 
       # Get the values of BW, latency, Rx and Tx
-      latency = port_list[1]
-      bw = port_list[2]
-      rx = port_list[3]
-      tx = port_list[4]
+      l = port_list[latency]
+      b = port_list[bw]
+      t = port_list[tx]
 
       # Just a "bad" implementation of cost function based on rough assumption
       n = 0
-      if tos_constants[1] is not 0:
+      if category is not "besteffort":
         n = 1
-      cost = tos_constants[0]/bw + n*(tos_constants[1]*latency + tos_constants[2]*tx)
+      cost = tos_constants[0]/b + n*(tos_constants[1]*l + tos_constants[2]*t)
 
       # Store the calculated cost value in the dictionary
       #link_costs[switch][dest_switch] = cost
       neighbors_dict[dest_switch] = cost
-    link_costs[switch] = neighbors_dict
-
-  print link_costs
-  return link_costs
+    link_costs[category][switch] = neighbors_dict
+  print "Going out of Find Cost"
+  print "##############################################################################################"
+  return link_costs[category]
 
 ################################################# End of Cost Function ###############################
 
@@ -490,7 +507,7 @@ waiting_paths = {}
 FLOOD_HOLDDOWN = 5
 
 # Flow timeouts
-FLOW_IDLE_TIMEOUT = 0
+FLOW_IDLE_TIMEOUT = 10
 FLOW_HARD_TIMEOUT = 0
 
 # How long is allowable to set up a path?
@@ -501,8 +518,6 @@ def _calc_paths ():
   """
   Essentially Floyd-Warshall algorithm
   """
-  #link_costs = find_cost(tos)
-  #print link_costs
   def dump ():
     for i in sws:
       for j in sws:
@@ -517,6 +532,8 @@ def _calc_paths ():
   for k in sws:
     for j,port in adjacency[k].iteritems():
       if port is None: continue
+      kdpid = k.dpid
+      jdpid = j.dpid
       path_map[k][j] = (1,None)
     path_map[k][k] = (0,None) # distance, intermediate
 
@@ -533,7 +550,9 @@ def _calc_paths ():
               # i -> k -> j is better than existing
               path_map[i][j] = (ikj_dist, k)
               
-  print "--------------------"
+  print "End of Floyd Warshall"
+  print "***************************************************************************"
+  print "***************************************************************************"
   #dump()
 
 ######################################################################################################
@@ -542,7 +561,8 @@ def _get_raw_path (src, dst):
   """
   Get a raw path (just a list of nodes to traverse)
   """
-  if len(path_map) == 0: _calc_paths()
+  if len(path_map) == 0: _calc_paths() 
+  #_calc_paths(tos)
   if src is dst:
     # We're here!
     return []
@@ -576,6 +596,7 @@ def _get_path (src, dst, first_port, final_port):
   """
   Gets a cooked path -- a list of (node,in_port,out_port)
   """
+  _calc_paths()
   # Start with a raw path...
   if src == dst:
     path = [src]
@@ -698,7 +719,6 @@ class l2_multi (EventMixin):
       if sw.connection is None: continue
       sw.connection.send(clear)
     path_map.clear()
-
     if event.removed:
       # This link no longer okay
       if sw2 in adjacency[sw1]: del adjacency[sw1][sw2]
@@ -713,10 +733,25 @@ class l2_multi (EventMixin):
             adjacency[sw2][sw1] = ll.port2
             # Fixed -- new link chosen to connect these
             break
+      # Update "Ports" and remove entries for this port
+      print "Link removed", l
+      for switch in ports:
+        for port in ports[switch]:
+          if port is l.port1:
+            print "Port removed = ", port
+            del ports[switch][port]
+            break
+
+      print "****************** Printing ports after Link removed event ****************"
+      print ports
+      print "***************************************************************************"
     else:
       # If we already consider these nodes connected, we can
       # ignore this link up.
       # Otherwise, we might be interested...
+      if event.added:
+        ports[dpidToStr(l.dpid1)][l.port1] = [0.0, 100, 0]
+        ports[dpidToStr(l.dpid2)][l.port2] = [0.0, 100, 0]
       if adjacency[sw1][sw2] is None:
         # These previously weren't connected.  If the link
         # exists in both directions, we consider them connected now.
@@ -739,6 +774,7 @@ class l2_multi (EventMixin):
 
   def _handle_openflow_ConnectionUp (self, event):
     sw = switches.get(event.dpid)
+    print "DPID for",event.dpid," = ",dpidToStr(event.dpid)
     if sw is None:
       # New switch
       sw = Switch()
@@ -756,7 +792,7 @@ class l2_multi (EventMixin):
     dpid_latency[event.dpid] = 0.000
     dpid_stats[event.dpid] = []
     for p in event.ofp.ports:
-      port = [str(p.hw_addr), 0.0, 100, 0, 0]
+      port = [0.0, 100, 0]
       ports[dpidToStr(event.dpid)][p.port_no] = port
 
     """
@@ -785,11 +821,15 @@ class l2_multi (EventMixin):
 #Timer(10, find_latency1, recurring = True)
 ######################################################################################################
 ###################################### Launch Function ###############################################
-Timer(10, find_latency1, recurring = True)
-timeout = min(max(PATH_SETUP_TIME, 5) * 2, 15)
-Timer(timeout, WaitingPath.expire_waiting_paths, recurring=True)
+
+def GetTopologyParams():
+  Timer(10, find_latency1, recurring = True)
+  timeout = min(max(PATH_SETUP_TIME, 5) * 2, 15)
+  Timer(timeout, WaitingPath.expire_waiting_paths, recurring=True)
+  Timer(15, find_HostPorts, recurring = False)
 
 def find_HostPorts ():
+  #print ports
   create_adjacency()
   for dpid in dpids:
     host_ports[dpid] = []
@@ -804,20 +844,18 @@ def find_HostPorts ():
           flag = True
       if flag is False:
         host_ports[dpid].append(allp)
-#    print "Host port for",dpidToStr(dpid)," = ",host_ports[dpid] 
+    print "Host port for",dpidToStr(dpid)," = ",host_ports[dpid] 
 
-Timer(10, find_HostPorts, recurring = False)
 def launch ():
-
   from pox.openflow.discovery import launch
   launch()
-
   def start_launch ():
     core.registerNew(l2_multi)
     core.openflow.addListenerByName("SwitchDescReceived", handle_switch_desc)
-    core.openflow.addListenerByName("PortStatsReceived", handle_PortStatsReceived)
+    core.openflow.addListenerByName("QueueStatsReceived", handle_QueueStatsReceived)
     print "Latency monitor"
     log.debug("Latency monitor running")
+    GetTopologyParams()
 
   core.call_when_ready(start_launch, "openflow_discovery")
 
