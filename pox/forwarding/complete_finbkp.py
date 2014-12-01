@@ -29,7 +29,6 @@ latency = 0
 bw = 1
 tx = 2
 prevtx = 3
-mac = 4
 time_init = int(time.time())
 first = 1
 
@@ -194,8 +193,10 @@ class Switch (EventMixin):
       Handle incoming latency packets
       """
       #print dpidToStr(event.dpid)
+      if swdebug:
+        print "Received on ",self.dpid," from ",event.dpid
       port = packet.src
-      [prevtime, port_mac, swdpdest, swdpsrc] = packet.payload.split(',')
+      [prevtime, swdpdest, swdpsrc] = packet.payload.split(',')
       prevtime = float(prevtime)
       currtime = time.time()
       #print "PrevTime = ", prevtime, "    CurrTime = ", currtime
@@ -206,9 +207,17 @@ class Switch (EventMixin):
         #print "Latency =",latency
         #swd = ports[dpidToStr(self.dpid)]
         swd = ports[swdpsrc]
-        for k in swd:
-          if swd[k][4] == port_mac:
-            break
+        #for k in swd:
+        #  if swd[k][0] == mac:
+        #    break
+        k = 0
+        for p in switch_adjacency[strToDPID(swdpsrc)]:
+          if swdebug:
+            print strToDPID(swdpsrc),"\n",switch_adjacency[strToDPID(swdpsrc)]
+          if switch_adjacency[strToDPID(swdpsrc)][p] is event.dpid:
+            if swdebug:
+              print "matches with",event.dpid," when p = ",p
+            k = p
         if latency >=0:
           if k in ports[swdpsrc]:
             ports[swdpsrc][k][0] = latency
@@ -338,6 +347,8 @@ def handle_QueueStatsReceived (event):
       qSt = qStats.tx_errors - ports[dpidToStr(event.dpid)][qStats.port_no][prevtx]
       ports[dpidToStr(event.dpid)][qStats.port_no][prevtx] = qStats.tx_errors
       ports[dpidToStr(event.dpid)][qStats.port_no][tx] = qSt
+      if swdebug:
+        print "Updated", dpidToStr(event.dpid),qStats.port_no," = ",qSt
 
 ######################################################################################################
 
@@ -345,19 +356,20 @@ def find_latency(dpid):
   for key in ports[dpidToStr(dpid)]:
     if(key != 65534):
       packet = of.ofp_packet_out(action = of.ofp_action_output(port = key))
-      packet.data = create_lat_pkt(dpid,key,ports[dpidToStr(dpid)][key][4])
+      packet.data = create_lat_pkt(dpid,key)
+      if swdebug:
+        print "Sending to ",dpidToStr(dpid)," key ", key
       core.openflow.sendToDPID(dpid, packet)
 
 ######################################################################################################
 
-def create_lat_pkt(dpid, port, port_mac):
+def create_lat_pkt(dpid, port):
   pkt1 = pkt.ethernet(type=LAT_TYPE)
-  pkt1.src = port_mac
   for l in core.openflow_discovery.adjacency:
       if ((l.dpid1 == dpid) and (l.port1 == port)):
         #print "Sending for",l
         pkt1.dst = pkt.ETHERNET.NDP_MULTICAST #need to decide
-        pkt1.payload = str(time.time()) + ',' + port_mac + ',' + dpidToStr(l.dpid2) + ',' + dpidToStr(l.dpid1)
+        pkt1.payload = str(time.time()) + ',' + dpidToStr(l.dpid2) + ',' + dpidToStr(l.dpid1)
         return pkt1.pack()
 
 ######################################################################################################
@@ -837,7 +849,7 @@ class l2_multi (EventMixin):
     dpid_latency[event.dpid] = 0.000
     dpid_stats[event.dpid] = []
     for p in event.ofp.ports:
-      port = [0.0, 100, 0, 0, str(p.hw_addr)]
+      port = [0.0, 100, 0, 0]
       ports[dpidToStr(event.dpid)][p.port_no] = port
 
     """

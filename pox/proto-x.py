@@ -14,7 +14,6 @@ import time
 from pox.openflow.libopenflow_01 import *
 import calendar
 from time import gmtime
-import cost_function as cf
 from collections import defaultdict
 from pox.openflow.discovery import Discovery
  
@@ -418,9 +417,9 @@ Constants declaration end
 """
 ####################################### Functions for Cost Function ###################################
 def get_cf_consts():
-  voice = [100, 0.3, 0.003]
-  video = [100, 0.1, 0.007]
-  business = [100, 0.02, 0.01]
+  voice = [100, 0.1, 0.003]
+  video = [100, 0.07, 0.007]
+  business = [100, 0.01, 0.01]
   besteffort = [100, 0, 0]
   cf_constants['voice'] = voice
   cf_constants['video'] = video
@@ -792,9 +791,9 @@ class l2_multi (EventMixin):
       # If we already consider these nodes connected, we can
       # ignore this link up.
       # Otherwise, we might be interested...
-      if event.added:
-        ports[dpidToStr(l.dpid1)][l.port1] = [0.0, 100, 0, 0]
-        ports[dpidToStr(l.dpid2)][l.port2] = [0.0, 100, 0, 0]
+      #if event.added:
+      #  ports[dpidToStr(l.dpid1)][l.port1] = [0.0, 100, 0, 0]
+      #  ports[dpidToStr(l.dpid2)][l.port2] = [0.0, 100, 0, 0]
       if adjacency[sw1][sw2] is None:
         # These previously weren't connected.  If the link
         # exists in both directions, we consider them connected now.
